@@ -675,8 +675,14 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         if (exact_fmt && info.pixel_format != image_resolved.info.pixel_format) {
             // Cannot reuse this image as we need the exact requested format.
             image_id = {};
-        } else if (!image_resolved.info.resources.Contains(info.resources)) {
-            // The image was clearly picked up wrong.
+        } else if (!image_resolved.info.resources.Contains(info.resources) &&
+                   !(image_resolved.info.type == AmdGpu::ImageType::Color3D &&
+                     info.type != AmdGpu::ImageType::Color3D &&
+                     image_resolved.info.resources.levels >= info.resources.levels &&
+                     image_resolved.info.size.depth >= info.resources.layers)) {
+            // The image was clearly picked up wrong. A volume serving its depth slices as the
+            // layers of a 2D (array) request is fine though: volumes are 2D-array compatible,
+            // and freeing it here would throw away everything rendered into it.
             FreeImage(image_id);
             image_id = {};
             LOG_WARNING(Render_Vulkan, "Image overlap resolve failed");

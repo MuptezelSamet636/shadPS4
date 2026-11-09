@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+
 #include "common/alignment.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
@@ -293,15 +295,17 @@ void Runtime::CopyImage(VideoCore::Image* src, VideoCore::Image* dst) {
                 region.extent = vk::Extent3D(mip_w, mip_h, 1);
             }
         } else if (is_2d_to_3d) {
-            // 2D array -> 3D volume
-            region.srcSubresource.layerCount = src_layers;
+            // 2D array -> 3D volume. Never copy more slices than the source has layers.
+            const u32 slices = std::min({src_layers, u32(src->info.resources.layers), mip_d});
+            region.srcSubresource.layerCount = slices;
             region.dstSubresource.layerCount = 1;
-            region.extent = vk::Extent3D(mip_w, mip_h, src_layers);
+            region.extent = vk::Extent3D(mip_w, mip_h, slices);
         } else if (is_3d_to_2d) {
-            // 3D volume -> 2D array
+            // 3D volume -> 2D array. Never copy more slices than the destination has layers.
+            const u32 slices = std::min({dst_layers, u32(dst->info.resources.layers), mip_d});
             region.srcSubresource.layerCount = 1;
-            region.dstSubresource.layerCount = dst_layers;
-            region.extent = vk::Extent3D(mip_w, mip_h, dst_layers);
+            region.dstSubresource.layerCount = slices;
+            region.extent = vk::Extent3D(mip_w, mip_h, slices);
         }
 
         regions.push_back(region);
