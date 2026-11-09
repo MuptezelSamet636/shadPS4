@@ -248,6 +248,12 @@ ImageView& Image::FindView(const ImageViewInfo& view_info, BackingImage& view_ba
 void Image::GetBarriers(Barriers& barriers, BackingImage& image_backing, vk::ImageLayout dst_layout,
                         vk::AccessFlags2 dst_mask, vk::PipelineStageFlags2 dst_stage,
                         std::optional<SubresourceRange> subres_range) {
+    // A volume has a single array layer; slices addressed through a 2D-array view of it are
+    // tracked (and transitioned) as the whole layer.
+    if (subres_range && info.props.is_volume) {
+        subres_range->base.layer = 0;
+        subres_range->extent.layers = 1;
+    }
     auto& last_state = image_backing.state;
     auto& subresource_states = image_backing.subresource_states;
 
