@@ -1377,6 +1377,11 @@ void Translator::V_CMP_CLASS_F32(const GcnInst& inst) {
             value = ir.FPIsInf(src0);
         } else if ((class_mask & IR::FloatClassFunc::Negative) == IR::FloatClassFunc::Negative) {
             value = ir.FPLessThanEqual(src0, ir.Imm32(-0.f));
+        } else if ((class_mask & IR::FloatClassFunc::NaN) != IR::FloatClassFunc{0} &&
+                   (class_mask & ~IR::FloatClassFunc::NaN) == IR::FloatClassFunc{0}) {
+            // Only one NaN kind requested (e.g. quiet NaN, mask 0x2): SPIR-V cannot tell
+            // quiet from signaling NaNs, so test for any NaN.
+            value = ir.FPIsNan(src0);
         } else {
             UNREACHABLE_MSG("Unsupported float class mask: {:#x}", static_cast<u32>(class_mask));
         }

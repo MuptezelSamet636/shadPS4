@@ -19,6 +19,10 @@ static void LowerCmpClass(IR::Block& block, IR::Inst& inst) {
         const IR::F32 value = IR::F32{inst.Arg(0)};
         inst.ReplaceUsesWithAndRemove(
             ir.LogicalNot(ir.LogicalOr(ir.FPIsNan(value), ir.FPIsInf(value))));
+    } else if ((class_mask & IR::FloatClassFunc::NaN) != IR::FloatClassFunc{0} &&
+               (class_mask & ~IR::FloatClassFunc::NaN) == IR::FloatClassFunc{0}) {
+        // Only one NaN kind requested (e.g. quiet NaN, mask 0x2): test for any NaN.
+        inst.ReplaceOpcode(IR::Opcode::FPIsNan32);
     } else {
         UNREACHABLE();
     }
