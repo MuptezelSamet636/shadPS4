@@ -108,8 +108,13 @@ u64 MemoryManager::ClampRangeSize(VAddr virtual_addr, u64 size) {
     }
 
     std::shared_lock lk{mutex};
-    ASSERT_MSG(IsValidMapping(virtual_addr), "Attempted to access invalid address {:#x}",
-               virtual_addr);
+    if (!IsValidMapping(virtual_addr)) {
+        // Garbage descriptors (e.g. from draws the guest meant to skip via predication) can
+        // point at unmapped memory. Treat them as empty instead of aborting.
+        LOG_WARNING(Kernel_Vmm, "Attempted to access invalid address {:#x} (size {:#x})",
+                    virtual_addr, size);
+        return 0;
+    }
 
     // Clamp size to the remaining size of the current VMA.
     auto vma = FindVMA(virtual_addr);

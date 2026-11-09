@@ -837,10 +837,12 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
             }
         } else {
             const auto vsharp = desc.GetSharp(stage);
-            if (vsharp.base_address == 0 || vsharp.GetSize() == 0) {
+            const u64 size = (vsharp.base_address == 0 || vsharp.GetSize() == 0)
+                                 ? 0
+                                 : memory->ClampRangeSize(vsharp.base_address, vsharp.GetSize());
+            if (size == 0) {
                 buffer_infos.emplace_back(VK_NULL_HANDLE, 0, VK_WHOLE_SIZE);
             } else {
-                const u64 size = memory->ClampRangeSize(vsharp.base_address, vsharp.GetSize());
                 if (size != vsharp.GetSize()) {
                     LOG_DEBUG(Render, "Clamped size from {} to {} for stage {:#x}",
                               vsharp.GetSize(), size, stage.pgm_hash);
