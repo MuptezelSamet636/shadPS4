@@ -396,6 +396,15 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
             return {ExpandImage(image_info, cache_image_id), -1, -1};
         }
 
+        // A 3D image aliasing a 2D (array) image at the same address, e.g. a volume texture
+        // whose first slices were rendered as a 2D array. The requested image is larger:
+        // expand it, like the equal-size 3D case above.
+        if (image_info.type != cache_image.info.type &&
+            (image_info.type == AmdGpu::ImageType::Color3D ||
+             cache_image.info.type == AmdGpu::ImageType::Color3D)) {
+            return {ExpandImage(image_info, cache_image_id), -1, -1};
+        }
+
         // Size is greater but resources are not, because the tiling mode is different.
         // Likely the address is reused for a image with a different tiling mode.
         if (image_info.tile_mode != cache_image.info.tile_mode) {
