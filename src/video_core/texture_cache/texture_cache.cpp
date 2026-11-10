@@ -366,6 +366,17 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
             return {ExpandImage(image_info, cache_image_id), -1, -1};
         }
 
+        // Rendering into a volume slice by slice (2D-array render target views of it):
+        // keep the volume instead of converting it to a 2D array and back every frame.
+        if (binding == BindingType::RenderTarget && cache_image.info.props.is_volume &&
+            !image_info.props.is_volume && image_info.size.width == cache_image.info.size.width &&
+            image_info.size.height == cache_image.info.size.height &&
+            image_info.resources.levels == 1 &&
+            image_info.resources.layers <= cache_image.info.size.depth &&
+            IsVulkanFormatCompatible(cache_image.info.pixel_format, image_info.pixel_format)) {
+            return {cache_image_id, -1, -1};
+        }
+
         if (image_info.guest_size == cache_image.info.guest_size &&
             (image_info.type == AmdGpu::ImageType::Color3D ||
              cache_image.info.type == AmdGpu::ImageType::Color3D)) {
@@ -717,8 +728,16 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         if (exact_fmt && info.pixel_format != image_resolved.info.pixel_format) {
             // Cannot reuse this image as we need the exact requested format.
             image_id = {};
-        } else if (!image_resolved.info.resources.Contains(info.resources)) {
-            // The image was clearly picked up wrong.
+        } else if (!image_resolved.info.resources.Contains(info.resources) &&
+                   !(desc.type == BindingType::RenderTarget &&
+                     image_resolved.info.props.is_volume && !info.props.is_volume &&
+                     image_resolved.info.size.width == info.size.width &&
+                     image_resolved.info.size.height == info.size.height &&
+                     info.resources.levels == 1 &&
+                     info.resources.layers <= image_resolved.info.size.depth)) {
+            // The image was clearly picked up wrong. A volume rendered slice by slice is fine
+            // though: its render target views are 2D-array views of the volume (the image is
+            // created 2D-array compatible), so rendering into it must not throw it away.
             if (image_resolved.info.type == info.type &&
                 image_resolved.info.pixel_format == info.pixel_format &&
                 image_resolved.info.size == info.size &&
