@@ -583,6 +583,17 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
 }
 
 ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id) {
+    {
+        const auto& old_info = slot_images[image_id].info;
+        LOG_INFO(Render_Vulkan,
+                 "ExpandImage {:#x}: type {} {}x{}x{} levels {} layers {} -> {:#x}: type {} "
+                 "{}x{}x{} levels {} layers {}",
+                 old_info.guest_address, static_cast<int>(old_info.type), old_info.size.width,
+                 old_info.size.height, old_info.size.depth, old_info.resources.levels,
+                 old_info.resources.layers, info.guest_address, static_cast<int>(info.type),
+                 info.size.width, info.size.height, info.size.depth, info.resources.levels,
+                 info.resources.layers);
+    }
     const auto new_image_id = slot_images.Insert(instance, runtime, slot_image_views, info);
     RegisterImage(new_image_id);
 
