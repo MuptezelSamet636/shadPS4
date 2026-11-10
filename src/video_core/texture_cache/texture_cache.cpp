@@ -656,27 +656,24 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     ForEachImageInRegion(info.guest_address, info.guest_size,
                          [&](ImageId image_id, Image& image) { image_ids.push_back(image_id); });
 
-    // Diagnostic: trace how requests at a volume (3D) image's address are resolved.
+    // Diagnostic: trace lookups of volume/cube images and lookups that overlap other images,
+    // when they end up creating or recreating an image.
     static u32 volume_trace_count = 0;
-    bool volume_trace = info.type == AmdGpu::ImageType::Color3D;
-    for (const auto& cache_id : image_ids) {
-        const auto& cache_info = slot_images[cache_id].info;
-        volume_trace |= cache_info.guest_address == info.guest_address &&
-                        cache_info.type == AmdGpu::ImageType::Color3D;
-    }
-    volume_trace = volume_trace && volume_trace_count < 3000;
+    bool volume_trace = info.type == AmdGpu::ImageType::Color3D ||
+                        info.type == AmdGpu::ImageType::Cube || !image_ids.empty();
+    volume_trace = volume_trace && volume_trace_count < 6000;
     std::string volume_trace_before;
     SmallVector<ImageId, 8> volume_trace_ids;
     const char* volume_trace_path = "new";
     if (volume_trace) {
         for (const auto& cache_id : image_ids) {
             const auto& cache_image = slot_images[cache_id];
-            if (cache_image.info.guest_address != info.guest_address) {
-                continue;
-            }
             volume_trace_ids.push_back(cache_id);
             volume_trace_before += fmt::format(
-                " [#{} type {} {}x{}x{} L{} {} tile {} size {:#x} flags {:#x}]", cache_id.index,
+                " [#{} {:+#x} type {} {}x{}x{} L{} {} tile {} size {:#x} flags {:#x}]",
+                cache_id.index,
+                static_cast<s64>(cache_image.info.guest_address) -
+                    static_cast<s64>(info.guest_address),
                 static_cast<int>(cache_image.info.type), cache_image.info.size.width,
                 cache_image.info.size.height, cache_image.info.size.depth,
                 cache_image.info.resources.layers, vk::to_string(cache_image.info.pixel_format),
