@@ -366,6 +366,21 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
             return {ExpandImage(image_info, cache_image_id), -1, -1};
         }
 
+        // Two copies of the same volume (left behind by earlier recreations): keep the one used
+        // most recently instead of merging them, which would copy the other one over it.
+        if (merged_image_id && image_info.props.is_volume && cache_image.info.props.is_volume &&
+            image_info.size == cache_image.info.size &&
+            image_info.guest_size == cache_image.info.guest_size &&
+            IsVulkanFormatCompatible(cache_image.info.pixel_format, image_info.pixel_format)) {
+            if (cache_image.tick_accessed_last > slot_images[merged_image_id].tick_accessed_last) {
+                return {cache_image_id, -1, -1};
+            }
+            if (safe_to_delete) {
+                FreeImage(cache_image_id);
+            }
+            return {merged_image_id, -1, -1};
+        }
+
         // Rendering into a volume slice by slice (2D-array render target views of it):
         // keep the volume instead of converting it to a 2D array and back every frame.
         if (binding == BindingType::RenderTarget && cache_image.info.props.is_volume &&
@@ -686,6 +701,12 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
             continue;
         }
         if (cache_image.info.size != info.size) {
+            continue;
+        }
+        // An equal guest size with a different layer count only lines up because of the
+        // tiling padding (e.g. a 1-layer thin target vs. 8 slices of a thick one): not a match.
+        if (cache_image.info.resources.layers != info.resources.layers &&
+            cache_image.info.tile_mode != info.tile_mode) {
             continue;
         }
         if (!IsVulkanFormatCompatible(cache_image.info.pixel_format, info.pixel_format) ||
