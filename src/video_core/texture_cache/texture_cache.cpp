@@ -272,6 +272,31 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
         requested_info.props.has_stencil == cache_image.info.props.has_stencil;
     const bool bpp_match = requested_info.num_bits == cache_image.info.num_bits;
 
+    // A depth buffer sampled through a view covering its whole padded allocation: grow the
+    // depth image to that size (keeping its contents) so the texture coordinates line up,
+    // instead of reading a stale copy from guest memory.
+    if (binding == BindingType::Texture && cache_image.info.props.is_depth &&
+        !requested_info.props.is_depth && cache_image.info.num_samples == 1 &&
+        requested_info.size.width >= cache_image.info.size.width &&
+        requested_info.size.height >= cache_image.info.size.height &&
+        requested_info.size != cache_image.info.size) {
+        auto new_info = cache_image.info;
+        new_info.size.width = requested_info.size.width;
+        new_info.size.height = requested_info.size.height;
+        LOG_INFO(Render_Vulkan, "Growing depth {:#x} {}x{} -> {}x{} for a texture view",
+                 cache_image.info.guest_address, cache_image.info.size.width,
+                 cache_image.info.size.height, new_info.size.width, new_info.size.height);
+        const auto new_image_id = slot_images.Insert(instance, runtime, slot_image_views, new_info);
+        RegisterImage(new_image_id);
+        auto& new_image = slot_images[new_image_id];
+        new_image.usage = cache_image.usage;
+        new_image.flags &= ~ImageFlagBits::Dirty;
+        new_image.info.meta_info.htile_clear_mask = 0;
+        runtime.CopyImage(&cache_image, &new_image);
+        FreeImage(cache_image_id);
+        return new_image_id;
+    }
+
     // If an image in the cache has less slices we need to expand it
     bool recreate = !cache_image.info.resources.Contains(requested_info.resources);
 
@@ -348,8 +373,15 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
     if (image_info.guest_address == cache_image.info.guest_address) {
         const u32 lhs_block_size = image_info.num_bits * image_info.num_samples;
         const u32 rhs_block_size = cache_image.info.num_bits * cache_image.info.num_samples;
-        if (image_info.BlockDim() != cache_image.info.BlockDim() ||
-            lhs_block_size != rhs_block_size) {
+        // A depth buffer and a view of its whole padded allocation (e.g. D32 1920x1080 read back
+        // as an R32 2048x1152 texture): same memory, only the described height differs.
+        const bool padded_depth_alias =
+            (image_info.props.is_depth || cache_image.info.props.is_depth) &&
+            image_info.guest_size == cache_image.info.guest_size &&
+            image_info.pitch == cache_image.info.pitch && lhs_block_size == rhs_block_size &&
+            image_info.resources == cache_image.info.resources;
+        if (!padded_depth_alias && (image_info.BlockDim() != cache_image.info.BlockDim() ||
+                                    lhs_block_size != rhs_block_size)) {
             // Very likely this kind of overlap is caused by allocation from a pool.
             if (safe_to_delete) {
                 FreeImage(cache_image_id);
