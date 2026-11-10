@@ -649,16 +649,17 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         volume_trace |= cache_info.guest_address == info.guest_address &&
                         cache_info.type == AmdGpu::ImageType::Color3D;
     }
-    volume_trace = volume_trace && volume_trace_count < 1500;
+    volume_trace = volume_trace && volume_trace_count < 3000;
     std::string volume_trace_before;
+    SmallVector<ImageId, 8> volume_trace_ids;
     const char* volume_trace_path = "new";
     if (volume_trace) {
-        ++volume_trace_count;
         for (const auto& cache_id : image_ids) {
             const auto& cache_image = slot_images[cache_id];
             if (cache_image.info.guest_address != info.guest_address) {
                 continue;
             }
+            volume_trace_ids.push_back(cache_id);
             volume_trace_before += fmt::format(
                 " [#{} type {} {}x{}x{} L{} {} tile {} size {:#x} flags {:#x}]", cache_id.index,
                 static_cast<int>(cache_image.info.type), cache_image.info.size.width,
@@ -775,7 +776,9 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     }
 
     Image& image = slot_images[image_id];
-    if (volume_trace) {
+    // Only log lookups that did not simply reuse an existing image (new or recreated ones).
+    if (volume_trace && std::ranges::find(volume_trace_ids, image_id) == volume_trace_ids.end()) {
+        ++volume_trace_count;
         LOG_INFO(Render_Vulkan,
                  "VolumeTrace {:#x}: req type {} {}x{}x{} L{} {} tile {} size {:#x} bind {} "
                  "exact {} | before:{} | {} -> #{} type {} {}x{}x{} L{} {} flags {:#x} view "
