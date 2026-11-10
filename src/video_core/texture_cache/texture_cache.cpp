@@ -683,20 +683,30 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
             // The image was clearly picked up wrong. A volume serving its depth slices as the
             // layers of a 2D (array) request is fine though: volumes are 2D-array compatible,
             // and freeing it here would throw away everything rendered into it.
-            LOG_WARNING(Render_Vulkan,
-                        "Image overlap resolve failed: requested {:#x} {} type {} {}x{}x{} "
-                        "levels {} layers {}, resolved {:#x} {} type {} {}x{}x{} levels {} "
-                        "layers {}",
-                        info.guest_address, vk::to_string(info.pixel_format),
-                        static_cast<int>(info.type), info.size.width, info.size.height,
-                        info.size.depth, info.resources.levels, info.resources.layers,
-                        image_resolved.info.guest_address,
-                        vk::to_string(image_resolved.info.pixel_format),
-                        static_cast<int>(image_resolved.info.type), image_resolved.info.size.width,
-                        image_resolved.info.size.height, image_resolved.info.size.depth,
-                        image_resolved.info.resources.levels, image_resolved.info.resources.layers);
-            FreeImage(image_id);
-            image_id = {};
+            if (image_resolved.info.type == info.type &&
+                image_resolved.info.pixel_format == info.pixel_format) {
+                // Same kind of image with fewer layers/levels (e.g. one slice rendered as a
+                // target, then read back as the whole array): grow it and keep its GPU data
+                // instead of recreating it from (stale) guest memory.
+                image_id = ExpandImage(info, image_id);
+                view_mip = -1;
+                view_slice = -1;
+            } else {
+                LOG_WARNING(
+                    Render_Vulkan,
+                    "Image overlap resolve failed: requested {:#x} {} type {} {}x{}x{} "
+                    "levels {} layers {}, resolved {:#x} {} type {} {}x{}x{} levels {} "
+                    "layers {}",
+                    info.guest_address, vk::to_string(info.pixel_format),
+                    static_cast<int>(info.type), info.size.width, info.size.height, info.size.depth,
+                    info.resources.levels, info.resources.layers, image_resolved.info.guest_address,
+                    vk::to_string(image_resolved.info.pixel_format),
+                    static_cast<int>(image_resolved.info.type), image_resolved.info.size.width,
+                    image_resolved.info.size.height, image_resolved.info.size.depth,
+                    image_resolved.info.resources.levels, image_resolved.info.resources.layers);
+                FreeImage(image_id);
+                image_id = {};
+            }
         }
     }
     // Create and register a new image
