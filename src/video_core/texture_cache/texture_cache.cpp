@@ -689,6 +689,8 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         } else if (!image_resolved.info.resources.Contains(info.resources) &&
                    !(image_resolved.info.type == AmdGpu::ImageType::Color3D &&
                      info.type != AmdGpu::ImageType::Color3D &&
+                     image_resolved.info.size.width == info.size.width &&
+                     image_resolved.info.size.height == info.size.height &&
                      image_resolved.info.resources.levels >= info.resources.levels &&
                      image_resolved.info.size.depth >= info.resources.layers)) {
             // The image was clearly picked up wrong. A volume serving its depth slices as the
@@ -696,8 +698,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
             // and freeing it here would throw away everything rendered into it.
             if (image_resolved.info.type == info.type &&
                 image_resolved.info.pixel_format == info.pixel_format &&
-                image_resolved.info.size == info.size &&
-                image_resolved.info.tile_mode == info.tile_mode) {
+                image_resolved.info.size == info.size) {
                 // Same kind of image with fewer layers/levels (e.g. one slice rendered as a
                 // target, then read back as the whole array): grow it and keep its GPU data
                 // instead of recreating it from (stale) guest memory.
