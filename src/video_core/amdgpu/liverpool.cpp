@@ -28,7 +28,8 @@ static const char* ccb_task_name{"CCB_TASK"};
 static_assert(Liverpool::NumComputeRings <= MAX_NAMES);
 
 #define NAME_NUM(z, n, name) BOOST_PP_STRINGIZE(name) BOOST_PP_STRINGIZE(n),
-#define NAME_ARRAY(name, num) {BOOST_PP_REPEAT(num, NAME_NUM, name)}
+#define NAME_ARRAY(name, num)                                                                      \
+    { BOOST_PP_REPEAT(num, NAME_NUM, name) }
 
 static const char* acb_task_name[] = NAME_ARRAY(ACB_TASK, MAX_NAMES);
 
@@ -297,6 +298,14 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb) {
         case 3:
             const u32 count = header->type3.NumWords();
             const PM4ItOpcode opcode = header->type3.opcode;
+            // Diagnostic: which packets the game predicates (flares visible through walls).
+            if (header->type3.predicate.Value() == PM4Predicate::PredEnable) {
+                static u32 predicated_logged = 0;
+                if (predicated_logged < 300) {
+                    ++predicated_logged;
+                    LOG_INFO(Render, "PredicatedPacket {}", magic_enum::enum_name(opcode));
+                }
+            }
             switch (opcode) {
             case PM4ItOpcode::Nop: {
                 const auto* nop = reinterpret_cast<const PM4CmdNop*>(header);
@@ -452,7 +461,16 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb) {
                 break;
             }
             case PM4ItOpcode::SetPredication: {
-                LOG_WARNING(Render, "Unimplemented IT_SET_PREDICATION");
+                static u32 set_predication_logged = 0;
+                if (set_predication_logged < 300) {
+                    ++set_predication_logged;
+                    const u32* body = reinterpret_cast<const u32*>(header) + 1;
+                    std::string words;
+                    for (u32 i = 0; i < count; ++i) {
+                        words += fmt::format(" {:08x}", body[i]);
+                    }
+                    LOG_INFO(Render, "SetPredication ({} words):{}", count, words);
+                }
                 break;
             }
             case PM4ItOpcode::IndexType: {
@@ -708,6 +726,11 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb) {
                     regs.cp_strmout_cntl.offset_update_done = 1;
                 } else if (event->event_index.Value() == EventIndex::ZpassDone) {
                     if (event->event_type.Value() == EventType::PixelPipeStatDump) {
+                        static u32 zpass_logged = 0;
+                        if (zpass_logged < 300) {
+                            ++zpass_logged;
+                            LOG_INFO(Render, "ZpassDone at {:#x}", event->Address<u64>());
+                        }
                         static constexpr u64 OcclusionCounterValidMask = 0x8000000000000000ULL;
                         static constexpr u64 OcclusionCounterStep = 0x2FFFFFFULL;
                         u64* results = event->Address<u64*>();
