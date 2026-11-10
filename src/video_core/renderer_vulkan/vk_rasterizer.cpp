@@ -53,10 +53,91 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     scheduler.SetSubmitCallback([this](Vulkan::SubmitInfo& info) {
         runtime.FlushBarriers();
         buffer_cache.SubmitPendingArenaBinds(info);
+        // A query can't span command buffers: close one that is still open.
+        std::scoped_lock lk{occlusion_mutex};
+        EndActiveOcclusionQuery();
     });
+
+    const vk::QueryPoolCreateInfo occlusion_pool_ci = {
+        .queryType = vk::QueryType::eOcclusion,
+        .queryCount = NumOcclusionQueries,
+    };
+    auto [pool_result, pool] = instance.GetDevice().createQueryPoolUnique(occlusion_pool_ci);
+    if (pool_result == vk::Result::eSuccess) {
+        occlusion_pool = std::move(pool);
+    } else {
+        LOG_ERROR(Render_Vulkan, "Failed to create occlusion query pool: {}",
+                  vk::to_string(pool_result));
+    }
 }
 
 Rasterizer::~Rasterizer() = default;
+
+void Rasterizer::BeginOcclusionQuery(VAddr address) {
+    std::scoped_lock lk{occlusion_mutex};
+    if (!occlusion_pool) {
+        return;
+    }
+    // Only one occlusion query can be active at a time in a command buffer.
+    EndActiveOcclusionQuery();
+    PollOcclusionQueries();
+
+    const u32 index = occlusion_next_index;
+    occlusion_next_index = (occlusion_next_index + 1) % NumOcclusionQueries;
+
+    scheduler.EndRendering();
+    const auto cmdbuf = scheduler.CommandBuffer();
+    cmdbuf.resetQueryPool(*occlusion_pool, index, 1);
+    cmdbuf.beginQuery(*occlusion_pool, index, {});
+    occlusion_active = true;
+    occlusion_active_address = address;
+    occlusion_active_index = index;
+}
+
+void Rasterizer::EndOcclusionQuery(VAddr address) {
+    std::scoped_lock lk{occlusion_mutex};
+    if (occlusion_active && occlusion_active_address == address) {
+        EndActiveOcclusionQuery();
+    }
+}
+
+void Rasterizer::EndActiveOcclusionQuery() {
+    if (!occlusion_active) {
+        return;
+    }
+    scheduler.EndRendering();
+    scheduler.CommandBuffer().endQuery(*occlusion_pool, occlusion_active_index);
+    occlusion_pending.push_back({
+        .address = occlusion_active_address,
+        .index = occlusion_active_index,
+        .tick = scheduler.CurrentTick(),
+    });
+    occlusion_active = false;
+}
+
+void Rasterizer::PollOcclusionQueries() {
+    while (!occlusion_pending.empty() && scheduler.IsFree(occlusion_pending.front().tick)) {
+        const auto& pending = occlusion_pending.front();
+        u64 samples = 0;
+        const auto result = instance.GetDevice().getQueryPoolResults(
+            *occlusion_pool, pending.index, 1, sizeof(samples), &samples, sizeof(samples),
+            vk::QueryResultFlagBits::e64);
+        if (result == vk::Result::eSuccess) {
+            occlusion_results[pending.address] = samples;
+        }
+        occlusion_pending.pop_front();
+    }
+}
+
+bool Rasterizer::IsOcclusionQueryVisible(VAddr address) {
+    std::scoped_lock lk{occlusion_mutex};
+    if (!occlusion_pool) {
+        return true;
+    }
+    PollOcclusionQueries();
+    const auto it = occlusion_results.find(address);
+    return it == occlusion_results.end() || it->second != 0;
+}
 
 bool Rasterizer::FilterDraw() {
     const auto& regs = liverpool->regs;

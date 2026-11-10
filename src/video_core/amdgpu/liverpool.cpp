@@ -53,6 +53,24 @@ static const char* acb_task_name[] = NAME_ARRAY(ACB_TASK, MAX_NAMES);
 
 std::array<u8, 48_KB> Liverpool::ConstantEngine::constants_heap;
 
+static bool IsDrawOpcode(PM4ItOpcode opcode) {
+    switch (opcode) {
+    case PM4ItOpcode::DrawIndirect:
+    case PM4ItOpcode::DrawIndexIndirect:
+    case PM4ItOpcode::DrawIndex2:
+    case PM4ItOpcode::DrawIndirectMulti:
+    case PM4ItOpcode::DrawIndexAuto:
+    case PM4ItOpcode::DrawIndexMultiAuto:
+    case PM4ItOpcode::DrawIndexOffset2:
+    case PM4ItOpcode::DrawIndexIndirectMulti:
+    case PM4ItOpcode::DrawIndirectCountMulti:
+    case PM4ItOpcode::DrawIndexIndirectCountMulti:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static std::span<const u32> NextPacket(std::span<const u32> span, size_t offset) {
     if (offset > span.size()) {
         LOG_ERROR(
@@ -298,12 +316,21 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb) {
         case 3:
             const u32 count = header->type3.NumWords();
             const PM4ItOpcode opcode = header->type3.opcode;
-            // Diagnostic: which packets the game predicates (flares visible through walls).
-            if (header->type3.predicate.Value() == PM4Predicate::PredEnable) {
-                static u32 predicated_logged = 0;
-                if (predicated_logged < 300) {
-                    ++predicated_logged;
-                    LOG_INFO(Render, "PredicatedPacket {}", magic_enum::enum_name(opcode));
+            // Predicated draws (SET_PREDICATION on a ZPASS_DONE occlusion query): skip the
+            // draw when the query result says it should not be drawn. Results come from the
+            // last finished query at that address, so they lag a frame or two.
+            if (header->type3.predicate.Value() == PM4Predicate::PredEnable && predication_active &&
+                rasterizer && IsDrawOpcode(opcode)) {
+                const bool visible = rasterizer->IsOcclusionQueryVisible(predication_address);
+                if (visible != predication_draw_if_visible) {
+                    static u32 skipped_logged = 0;
+                    if (skipped_logged < 20) {
+                        ++skipped_logged;
+                        LOG_INFO(Render, "Skipping predicated {} (query {:#x})",
+                                 magic_enum::enum_name(opcode), predication_address);
+                    }
+                    dcb = NextPacket(dcb, count + 1);
+                    continue;
                 }
             }
             switch (opcode) {
@@ -461,15 +488,20 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb) {
                 break;
             }
             case PM4ItOpcode::SetPredication: {
-                static u32 set_predication_logged = 0;
-                if (set_predication_logged < 300) {
-                    ++set_predication_logged;
-                    const u32* body = reinterpret_cast<const u32*>(header) + 1;
-                    std::string words;
-                    for (u32 i = 0; i < count; ++i) {
-                        words += fmt::format(" {:08x}", body[i]);
+                const u32* body = reinterpret_cast<const u32*>(header) + 1;
+                // dw1: start address [31:4]; dw2: address hi [7:0], predication boolean [8],
+                // operation [18:16] (0 = clear, 1 = ZPass).
+                const u32 operation = (body[1] >> 16) & 7;
+                if (operation == 1) {
+                    predication_active = true;
+                    predication_address = (u64(body[1] & 0xFF) << 32) | (body[0] & ~0xFu);
+                    predication_draw_if_visible = ((body[1] >> 8) & 1) != 0;
+                } else {
+                    if (operation != 0) {
+                        LOG_WARNING(Render, "Unimplemented SET_PREDICATION operation {}",
+                                    operation);
                     }
-                    LOG_INFO(Render, "SetPredication ({} words):{}", count, words);
+                    predication_active = false;
                 }
                 break;
             }
@@ -726,10 +758,15 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb) {
                     regs.cp_strmout_cntl.offset_update_done = 1;
                 } else if (event->event_index.Value() == EventIndex::ZpassDone) {
                     if (event->event_type.Value() == EventType::PixelPipeStatDump) {
-                        static u32 zpass_logged = 0;
-                        if (zpass_logged < 300) {
-                            ++zpass_logged;
-                            LOG_INFO(Render, "ZpassDone at {:#x}", event->Address<u64>());
+                        // Counter pairs are 16 bytes: the begin dump goes to the pair base,
+                        // the end dump to base + 8.
+                        const u64 zpass_address = event->Address<u64>();
+                        if (rasterizer) {
+                            if ((zpass_address & 0xF) == 0) {
+                                rasterizer->BeginOcclusionQuery(zpass_address);
+                            } else {
+                                rasterizer->EndOcclusionQuery(zpass_address & ~0xFULL);
+                            }
                         }
                         static constexpr u64 OcclusionCounterValidMask = 0x8000000000000000ULL;
                         static constexpr u64 OcclusionCounterStep = 0x2FFFFFFULL;

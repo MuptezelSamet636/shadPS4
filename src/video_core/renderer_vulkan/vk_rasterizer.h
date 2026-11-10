@@ -3,6 +3,10 @@
 
 #pragma once
 
+#include <deque>
+#include <mutex>
+#include <unordered_map>
+
 #include "common/recursive_lock.h"
 #include "common/shared_first_mutex.h"
 #include "video_core/buffer_cache/buffer_cache.h"
@@ -97,6 +101,12 @@ public:
         }
     }
 
+    /// Occlusion queries backing ZPASS_DONE counter pairs and SET_PREDICATION.
+    void BeginOcclusionQuery(VAddr address);
+    void EndOcclusionQuery(VAddr address);
+    /// Whether the last finished occlusion query at address saw any samples (true if unknown).
+    bool IsOcclusionQueryVisible(VAddr address);
+
     std::thread::id GetGpuCommandProcessorThread();
 #ifdef __linux__
     u32 GetGpuCommandProcessorThreadId();
@@ -180,6 +190,24 @@ private:
 
     bool attachment_feedback_loop{};
     bool needs_barrier{};
+
+    void EndActiveOcclusionQuery();
+    void PollOcclusionQueries();
+
+    static constexpr u32 NumOcclusionQueries = 4096;
+    struct PendingOcclusionQuery {
+        VAddr address;
+        u32 index;
+        u64 tick;
+    };
+    vk::UniqueQueryPool occlusion_pool;
+    u32 occlusion_next_index{};
+    bool occlusion_active{};
+    VAddr occlusion_active_address{};
+    u32 occlusion_active_index{};
+    std::deque<PendingOcclusionQuery> occlusion_pending;
+    std::unordered_map<VAddr, u64> occlusion_results;
+    std::mutex occlusion_mutex;
 };
 
 } // namespace Vulkan

@@ -213,6 +213,9 @@ private:
     VAddr indirect_args_addr{};
     u32 num_counter_pairs{};
     u64 pixel_counter{};
+    bool predication_active{};
+    bool predication_draw_if_visible{true};
+    VAddr predication_address{};
     u32 vgt_strmout_buffer_filled_size[4]{};
 
     struct ConstantEngine {
