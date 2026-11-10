@@ -695,7 +695,9 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
             // layers of a 2D (array) request is fine though: volumes are 2D-array compatible,
             // and freeing it here would throw away everything rendered into it.
             if (image_resolved.info.type == info.type &&
-                image_resolved.info.pixel_format == info.pixel_format) {
+                image_resolved.info.pixel_format == info.pixel_format &&
+                image_resolved.info.size == info.size &&
+                image_resolved.info.tile_mode == info.tile_mode) {
                 // Same kind of image with fewer layers/levels (e.g. one slice rendered as a
                 // target, then read back as the whole array): grow it and keep its GPU data
                 // instead of recreating it from (stale) guest memory.
