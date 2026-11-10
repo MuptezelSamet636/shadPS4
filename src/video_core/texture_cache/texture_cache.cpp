@@ -630,6 +630,34 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     ForEachImageInRegion(info.guest_address, info.guest_size,
                          [&](ImageId image_id, Image& image) { image_ids.push_back(image_id); });
 
+    // Diagnostic: trace how requests at a volume (3D) image's address are resolved.
+    static u32 volume_trace_count = 0;
+    bool volume_trace = info.type == AmdGpu::ImageType::Color3D;
+    for (const auto& cache_id : image_ids) {
+        const auto& cache_info = slot_images[cache_id].info;
+        volume_trace |= cache_info.guest_address == info.guest_address &&
+                        cache_info.type == AmdGpu::ImageType::Color3D;
+    }
+    volume_trace = volume_trace && volume_trace_count < 1500;
+    std::string volume_trace_before;
+    const char* volume_trace_path = "new";
+    if (volume_trace) {
+        ++volume_trace_count;
+        for (const auto& cache_id : image_ids) {
+            const auto& cache_image = slot_images[cache_id];
+            if (cache_image.info.guest_address != info.guest_address) {
+                continue;
+            }
+            volume_trace_before += fmt::format(
+                " [#{} type {} {}x{}x{} L{} {} tile {} size {:#x} flags {:#x}]", cache_id.index,
+                static_cast<int>(cache_image.info.type), cache_image.info.size.width,
+                cache_image.info.size.height, cache_image.info.size.depth,
+                cache_image.info.resources.layers, vk::to_string(cache_image.info.pixel_format),
+                static_cast<u32>(cache_image.info.tile_mode), cache_image.info.guest_size,
+                static_cast<u32>(cache_image.flags));
+        }
+    }
+
     ImageId image_id{};
 
     ImageId subrect_source{};
@@ -656,10 +684,12 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
             continue;
         }
         image_id = cache_id;
+        volume_trace_path = "exact";
     }
 
-    if (!image_id) {
+    if (!image_id && subrect_source) {
         image_id = subrect_source;
+        volume_trace_path = "subrect";
     }
 
     // Try to resolve overlaps (if any)
@@ -674,6 +704,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
             auto [overlap_image_id, overlap_view_mip, overlap_view_slice] =
                 ResolveOverlap(merged_info, desc.type, cache_id, image_id);
             if (overlap_image_id) {
+                volume_trace_path = "overlap";
                 image_id = overlap_image_id;
                 view_mip = overlap_view_mip;
                 view_slice = overlap_view_slice;
@@ -719,11 +750,26 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     }
     // Create and register a new image
     if (!image_id) {
+        volume_trace_path = "new";
         image_id = slot_images.Insert(instance, runtime, slot_image_views, info);
         RegisterImage(image_id);
     }
 
     Image& image = slot_images[image_id];
+    if (volume_trace) {
+        LOG_INFO(Render_Vulkan,
+                 "VolumeTrace {:#x}: req type {} {}x{}x{} L{} {} tile {} size {:#x} bind {} "
+                 "exact {} | before:{} | {} -> #{} type {} {}x{}x{} L{} {} flags {:#x} view "
+                 "mip {} slice {}",
+                 info.guest_address, static_cast<int>(info.type), info.size.width, info.size.height,
+                 info.size.depth, info.resources.layers, vk::to_string(info.pixel_format),
+                 static_cast<u32>(info.tile_mode), info.guest_size, static_cast<u32>(desc.type),
+                 exact_fmt, volume_trace_before, volume_trace_path, image_id.index,
+                 static_cast<int>(image.info.type), image.info.size.width, image.info.size.height,
+                 image.info.size.depth, image.info.resources.layers,
+                 vk::to_string(image.info.pixel_format), static_cast<u32>(image.flags), view_mip,
+                 view_slice);
+    }
     image.tick_accessed_last = scheduler.CurrentTick();
     TouchImage(image);
 
