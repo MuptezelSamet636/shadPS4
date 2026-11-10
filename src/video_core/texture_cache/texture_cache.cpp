@@ -698,7 +698,9 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
             // and freeing it here would throw away everything rendered into it.
             if (image_resolved.info.type == info.type &&
                 image_resolved.info.pixel_format == info.pixel_format &&
-                image_resolved.info.size == info.size) {
+                image_resolved.info.size == info.size &&
+                image_resolved.info.resources.levels == info.resources.levels &&
+                image_resolved.info.resources.layers < info.resources.layers) {
                 // Same kind of image with fewer layers/levels (e.g. one slice rendered as a
                 // target, then read back as the whole array): grow it and keep its GPU data
                 // instead of recreating it from (stale) guest memory.
