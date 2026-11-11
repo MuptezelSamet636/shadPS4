@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <ranges>
+#include <set>
 
 #include "common/hash.h"
 #include "common/io_file.h"
@@ -200,6 +201,25 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(HwStage stage, SwStag
             regs.alpha_to_mask.enable && !regs.depth_shader_control.alpha_to_mask_disable &&
             mrt0_alpha &&
             (regs.color_shader_mask.GetMask(0) & AmdGpu::ColorBufferMask::ComponentA) != 0;
+        if (regs.alpha_to_mask.enable) {
+            // Diagnostic: log each distinct alpha-to-mask setup once, enabled or dropped.
+            static std::set<u64> logged_a2m;
+            const u64 a2m_key =
+                (u64(mrt0_export_format) << 40) | (u64(regs.color_shader_mask.GetMask(0)) << 32) |
+                (u64(regs.color_target_mask.GetMask(0)) << 24) |
+                (u64(regs.depth_shader_control.alpha_to_mask_disable) << 20) |
+                (u64(regs.aa_config.msaa_num_samples) << 16) | u64(info.hw.fs.alpha_to_mask_enable);
+            if (logged_a2m.insert(a2m_key).second && logged_a2m.size() <= 64) {
+                LOG_INFO(Render_Vulkan,
+                         "AlphaToMask {}: mrt0 export {} shader mask {:#x} target mask {:#x} "
+                         "a2m disable {} msaa {} ps {:#x}",
+                         info.hw.fs.alpha_to_mask_enable ? "used" : "DROPPED",
+                         static_cast<u32>(mrt0_export_format), regs.color_shader_mask.GetMask(0),
+                         regs.color_target_mask.GetMask(0),
+                         regs.depth_shader_control.alpha_to_mask_disable,
+                         regs.aa_config.msaa_num_samples, AmdGpu::GetParams(regs.ps_program).hash);
+            }
+        }
         info.hw.fs.coverage_to_mask_enable = regs.depth_shader_control.coverage_to_mask_enable;
         if (info.hw.fs.alpha_to_mask_enable || info.hw.fs.coverage_to_mask_enable ||
             regs.depth_shader_control.mask_export_enable) {
