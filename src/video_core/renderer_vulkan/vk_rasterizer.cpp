@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <set>
+
 #include "common/debug.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
@@ -1040,6 +1042,31 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
                 // Redirect the access to the actual depth-stencil buffer.
                 image_id = depth_image_id;
                 image = &texture_cache.GetImage(image_id);
+            }
+            {
+                // Diagnostic: describe each texture binding of each shader once.
+                static std::set<std::pair<u64, u32>> logged_bindings;
+                if (logged_bindings.size() < 8000 &&
+                    logged_bindings.insert({stage.pgm_hash, num_images - 1}).second) {
+                    LOG_INFO(Render_Vulkan,
+                             "TexBind {} {:#x} #{}: T# {:#x} type {} {}x{}x{} dfmt {} nfmt {} "
+                             "sel {}{}{}{} tile {} mips {}-{} arr {}-{} pitch {} | img #{} type "
+                             "{} {}x{}x{} L{} M{} {} flags {:#x}{} | view {} {} layers {}+{}",
+                             magic_enum::enum_name(stage.sw_stage), stage.pgm_hash, num_images - 1,
+                             tsharp.Address(), u32(tsharp.type), u32(tsharp.width) + 1,
+                             u32(tsharp.height) + 1, u32(tsharp.depth) + 1, u32(tsharp.data_format),
+                             u32(tsharp.num_format), u32(tsharp.dst_sel_x), u32(tsharp.dst_sel_y),
+                             u32(tsharp.dst_sel_z), u32(tsharp.dst_sel_w), u32(tsharp.tiling_index),
+                             u32(tsharp.base_level), u32(tsharp.last_level), u32(tsharp.base_array),
+                             u32(tsharp.last_array), u32(tsharp.pitch) + 1, image_id.index,
+                             u32(image->info.type), image->info.size.width, image->info.size.height,
+                             image->info.size.depth, image->info.resources.layers,
+                             image->info.resources.levels, vk::to_string(image->info.pixel_format),
+                             u32(image->flags), image->info.props.is_depth ? " depth" : "",
+                             magic_enum::enum_name(desc.view_info.type),
+                             vk::to_string(desc.view_info.format), desc.view_info.range.base.layer,
+                             desc.view_info.range.extent.layers);
+                }
             }
             if (desc.IsSubrectTexture(image->info)) {
                 continue;
