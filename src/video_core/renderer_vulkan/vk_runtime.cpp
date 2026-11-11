@@ -191,6 +191,7 @@ void Runtime::UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
     }
 
     const auto cmdbuf = scheduler.CommandBuffer();
+    Vulkan::SetCheckpoint(instance, cmdbuf, "copyBufferToImage", 194);
     cmdbuf.copyBufferToImage(src->Handle(), dst->GetImage(), vk::ImageLayout::eTransferDstOptimal,
                              upload_copies);
 
@@ -220,6 +221,7 @@ void Runtime::DownloadImage(VideoCore::Image* src, const VideoCore::Buffer* dst,
     }
 
     auto cmdbuf = scheduler.CommandBuffer();
+    Vulkan::SetCheckpoint(instance, cmdbuf, "copyImageToBuffer", 223);
     cmdbuf.copyImageToBuffer(src->GetImage(), vk::ImageLayout::eTransferSrcOptimal, dst->Handle(),
                              download_copies);
 
@@ -323,6 +325,7 @@ void Runtime::CopyImage(VideoCore::Image* src, VideoCore::Image* dst) {
     }
 
     auto cmdbuf = scheduler.CommandBuffer();
+    Vulkan::SetCheckpoint(instance, cmdbuf, "copyImage", 326);
     cmdbuf.copyImage(src->GetImage(), vk::ImageLayout::eTransferSrcOptimal, dst->GetImage(),
                      vk::ImageLayout::eTransferDstOptimal, regions);
 
@@ -424,6 +427,7 @@ void Runtime::CopyImageWithBuffer(VideoCore::Image* src, VideoCore::Image* dst,
     }
 
     auto cmdbuf = scheduler.CommandBuffer();
+    Vulkan::SetCheckpoint(instance, cmdbuf, "copyImageToBuffer", 427);
     cmdbuf.copyImageToBuffer(src->GetImage(), vk::ImageLayout::eTransferSrcOptimal,
                              buffer->Handle(), buffer_copies);
 
@@ -442,6 +446,7 @@ void Runtime::CopyImageWithBuffer(VideoCore::Image* src, VideoCore::Image* dst,
     for (auto& copy : buffer_copies) {
         copy.imageSubresource.aspectMask = dst->aspect_mask & ~vk::ImageAspectFlagBits::eStencil;
     }
+    Vulkan::SetCheckpoint(instance, cmdbuf, "copyBufferToImage", 445);
     cmdbuf.copyBufferToImage(buffer->Handle(), dst->GetImage(),
                              vk::ImageLayout::eTransferDstOptimal, buffer_copies);
 
@@ -494,6 +499,7 @@ void Runtime::CopyMip(VideoCore::Image* src, VideoCore::Image* dst, u32 mip, u32
     }
 
     const auto cmdbuf = scheduler.CommandBuffer();
+    Vulkan::SetCheckpoint(instance, cmdbuf, "copyImage", 497);
     cmdbuf.copyImage(src->GetImage(), vk::ImageLayout::eTransferSrcOptimal, dst->GetImage(),
                      vk::ImageLayout::eTransferDstOptimal, image_copy);
 
@@ -571,6 +577,7 @@ void Runtime::CopyDepthStencil(VideoCore::Image* src, VideoCore::Image* dst,
     };
 
     const auto cmdbuf = scheduler.CommandBuffer();
+    Vulkan::SetCheckpoint(instance, cmdbuf, "copyImage", 574);
     cmdbuf.copyImage(src->GetImage(), vk::ImageLayout::eTransferSrcOptimal, dst->GetImage(),
                      vk::ImageLayout::eTransferDstOptimal, region);
 
@@ -616,6 +623,7 @@ void Runtime::ResolveImage(VideoCore::Image* src, VideoCore::Image* dst,
             .dstOffset = {0, 0, 0},
             .extent = {src->info.size.width, src->info.size.height, 1},
         };
+        Vulkan::SetCheckpoint(instance, cmdbuf, "copyImage", 619);
         cmdbuf.copyImage(src->GetImage(), vk::ImageLayout::eTransferSrcOptimal, dst->GetImage(),
                          vk::ImageLayout::eTransferDstOptimal, region);
     } else {
@@ -636,6 +644,7 @@ void Runtime::ResolveImage(VideoCore::Image* src, VideoCore::Image* dst,
             .dstOffset = {0, 0, 0},
             .extent = {src->info.size.width, src->info.size.height, 1},
         };
+        Vulkan::SetCheckpoint(instance, cmdbuf, "resolveImage", 639);
         cmdbuf.resolveImage(src->GetImage(), vk::ImageLayout::eTransferSrcOptimal, dst->GetImage(),
                             vk::ImageLayout::eTransferDstOptimal, region);
     }
@@ -663,6 +672,7 @@ void Runtime::ClearImage(VideoCore::Image* dst, const VideoCore::SubresourceRang
         .layerCount = range.extent.layers,
     };
     const auto cmdbuf = scheduler.CommandBuffer();
+    Vulkan::SetCheckpoint(instance, cmdbuf, "clearColorImage", 666);
     cmdbuf.clearColorImage(dst->GetImage(), vk::ImageLayout::eTransferDstOptimal, clear_value.color,
                            vk_range);
 

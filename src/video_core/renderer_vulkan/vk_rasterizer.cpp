@@ -94,6 +94,7 @@ void Rasterizer::BeginOcclusionQuery(VAddr address) {
 
     scheduler.EndRendering();
     const auto cmdbuf = scheduler.CommandBuffer();
+    SetCheckpoint(instance, cmdbuf, "beginQuery", address, index);
     cmdbuf.resetQueryPool(*occlusion_pool, index, 1);
     cmdbuf.beginQuery(*occlusion_pool, index, {});
     occlusion_active = true;
@@ -113,6 +114,8 @@ void Rasterizer::EndActiveOcclusionQuery() {
         return;
     }
     scheduler.EndRendering();
+    SetCheckpoint(instance, scheduler.CommandBuffer(), "endQuery", occlusion_active_address,
+                  occlusion_active_index);
     scheduler.CommandBuffer().endQuery(*occlusion_pool, occlusion_active_index);
     occlusion_pending.push_back({
         .address = occlusion_active_address,
@@ -326,6 +329,7 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
         cmdbuf.draw(regs.num_indices, regs.num_instances.NumInstances(), vertex_offset,
                     instance_offset);
     }
+    SetCheckpoint(instance, cmdbuf, "drawDone", 0);
     DebugState.IncDrawCall();
 
     ResetBindings(false);
@@ -450,6 +454,7 @@ void Rasterizer::DispatchDirect() {
     SetCheckpoint(instance, cmdbuf, "dispatch", cs.pgm_hash, cs_program.dim_x, cs_program.dim_y,
                   cs_program.dim_z);
     cmdbuf.dispatch(cs_program.dim_x, cs_program.dim_y, cs_program.dim_z);
+    SetCheckpoint(instance, cmdbuf, "dispatchDone", 0);
     DebugState.IncDispatch();
 
     ResetBindings(true);
@@ -487,6 +492,7 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
     SetCheckpoint(instance, cmdbuf, "dispatchIndirect",
                   pipeline->GetStage(Shader::SwStage::Compute).pgm_hash, address + offset);
     cmdbuf.dispatchIndirect(buffer->Handle(), base);
+    SetCheckpoint(instance, cmdbuf, "dispatchDone", 0);
     DebugState.IncDispatch();
 
     ResetBindings(true);

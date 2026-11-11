@@ -53,7 +53,7 @@ void DumpCheckpoints(const Instance& instance) {
                      vk::to_string(entry.stage), id, label.kind, label.a, label.b, label.c,
                      label.d);
         // Also show the commands recorded just before it.
-        for (u64 prev = id > 8 ? id - 8 : 1; prev < id; ++prev) {
+        for (u64 prev = id > 16 ? id - 16 : 1; prev < id; ++prev) {
             const auto& p = checkpoint_labels[prev % NumCheckpointLabels];
             if (p.id == prev && p.kind) {
                 LOG_CRITICAL(Render_Vulkan, "    before: #{} {} {:#x} {:#x} {:#x} {:#x}", prev,
@@ -132,6 +132,10 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
         .pDepthAttachment = db.has_depth ? &depth_attachment : nullptr,
         .pStencilAttachment = db.has_stencil ? &stencil_attachment : nullptr,
     };
+    SetCheckpoint(instance, CommandBuffer(), "beginRendering",
+                  (u64(render_state.width) << 32) | render_state.height, render_state.num_layers,
+                  render_state.num_color_attachments,
+                  (u64(db.has_depth) << 1) | u64(db.has_stencil));
 
     CommandBuffer().beginRendering(rendering_info);
 }
