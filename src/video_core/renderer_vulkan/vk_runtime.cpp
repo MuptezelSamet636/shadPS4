@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <vector>
 
 #include "common/alignment.h"
 #include "video_core/buffer_cache/buffer.h"
@@ -175,7 +176,48 @@ bool Runtime::Transit(VideoCore::Image* image, vk::ImageLayout dst_layout,
 }
 
 void Runtime::UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
-                          std::span<const vk::BufferImageCopy> upload_copies) {
+                          std::span<const vk::BufferImageCopy> upload_copies_in) {
+    // Drop copies that would read past the source buffer or write outside the image: on
+    // NVIDIA such a copy faults and loses the device. Log them, they point at a layout bug.
+    std::vector<vk::BufferImageCopy> valid_copies;
+    valid_copies.reserve(upload_copies_in.size());
+    for (const auto& copy : upload_copies_in) {
+        const u32 mip = copy.imageSubresource.mipLevel;
+        const u32 mip_w = std::max(dst->info.size.width >> mip, 1u);
+        const u32 mip_h = std::max(dst->info.size.height >> mip, 1u);
+        const u32 mip_d =
+            dst->info.props.is_volume ? std::max(dst->info.size.depth >> mip, 1u) : 1u;
+        const u64 copy_end =
+            copy.bufferOffset + u64(BufferImageCopySize(copy, dst->info.pixel_format));
+        const bool fits_buffer = copy_end <= src->SizeBytes();
+        const bool fits_image =
+            mip < dst->info.resources.levels && copy.imageExtent.width <= mip_w &&
+            copy.imageExtent.height <= mip_h && copy.imageExtent.depth <= mip_d &&
+            copy.imageSubresource.baseArrayLayer + copy.imageSubresource.layerCount <=
+                (dst->info.props.is_volume ? 1u : dst->info.resources.layers) &&
+            (copy.bufferRowLength == 0 || copy.bufferRowLength >= copy.imageExtent.width) &&
+            (copy.bufferImageHeight == 0 || copy.bufferImageHeight >= copy.imageExtent.height);
+        if (fits_buffer && fits_image) {
+            valid_copies.push_back(copy);
+            continue;
+        }
+        LOG_ERROR(Render_Vulkan,
+                  "Dropping invalid upload to {:#x} ({} {}x{}x{} L{} M{} tile {}): mip {} extent "
+                  "{}x{}x{} layers {}+{} row {} height {} buffer {:#x}..{:#x} of {:#x}",
+                  dst->info.guest_address, vk::to_string(dst->info.pixel_format),
+                  dst->info.size.width, dst->info.size.height, dst->info.size.depth,
+                  dst->info.resources.layers, dst->info.resources.levels, u32(dst->info.tile_mode),
+                  mip, copy.imageExtent.width, copy.imageExtent.height, copy.imageExtent.depth,
+                  copy.imageSubresource.baseArrayLayer, copy.imageSubresource.layerCount,
+                  copy.bufferRowLength, copy.bufferImageHeight, copy.bufferOffset, copy_end,
+                  src->SizeBytes());
+    }
+    if (valid_copies.empty()) {
+        return;
+    }
+    const std::span<const vk::BufferImageCopy> upload_copies{valid_copies.data(),
+                                                             valid_copies.size()};
+
     SetBackingSamples(dst, dst->info.num_samples, false);
     scheduler.EndRendering();
 
@@ -191,7 +233,9 @@ void Runtime::UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
     }
 
     const auto cmdbuf = scheduler.CommandBuffer();
-    Vulkan::SetCheckpoint(instance, cmdbuf, "copyBufferToImage", 194);
+    Vulkan::SetCheckpoint(instance, cmdbuf, "upload", dst->info.guest_address,
+                          (u64(dst->info.size.width) << 32) | dst->info.size.height,
+                          u64(dst->info.pixel_format), upload_copies.size());
     cmdbuf.copyBufferToImage(src->Handle(), dst->GetImage(), vk::ImageLayout::eTransferDstOptimal,
                              upload_copies);
 
