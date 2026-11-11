@@ -897,6 +897,31 @@ ImageView& TextureCache::FindTexture(ImageId image_id, const ImageDesc& desc) {
         }
     }
     UpdateImage(image_id);
+
+    // Diagnostic: CPU-sourced volume/cube textures (baked lighting/LUT candidates). Log what
+    // guest memory holds when they are bound, to spot images uploaded before their data was
+    // written (or never refreshed after it changed).
+    if ((image.info.type == AmdGpu::ImageType::Color3D ||
+         image.info.type == AmdGpu::ImageType::Cube) &&
+        False(image.flags & ImageFlagBits::GpuModified) && image.info.guest_address != 0) {
+        static std::unordered_map<VAddr, u32> bind_counts;
+        const u32 n = bind_counts[image.info.guest_address]++;
+        if (n < 3 || (n % 5000) == 0) {
+            const auto* data = reinterpret_cast<const u8*>(image.info.guest_address);
+            const size_t size = image.info.guest_size;
+            size_t nonzero = 0;
+            for (size_t i = 0; i < size; ++i) {
+                nonzero += data[i] != 0;
+            }
+            LOG_INFO(Render_Vulkan,
+                     "VolumeBind {:#x} type {} {}x{}x{} {} uid {} bind #{}: guest hash {:#018x} "
+                     "nonzero {}/{} flags {:#x}",
+                     image.info.guest_address, static_cast<int>(image.info.type),
+                     image.info.size.width, image.info.size.height, image.info.size.depth,
+                     vk::to_string(image.info.pixel_format), image.image_uid, n,
+                     XXH3_64bits(data, size), nonzero, size, static_cast<u32>(image.flags));
+        }
+    }
     return image.FindView(desc.view_info);
 }
 
