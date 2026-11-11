@@ -73,6 +73,13 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
 
 Rasterizer::~Rasterizer() = default;
 
+/// Guest program hash of a pipeline stage (matches the shader dump file names), 0 if absent.
+static u64 StageProgramHash(const GraphicsPipeline* pipeline, Shader::SwStage stage) {
+    const auto stages = pipeline->GetStages();
+    const auto* info = stages[static_cast<u32>(stage)];
+    return info ? info->pgm_hash : 0;
+}
+
 void Rasterizer::BeginOcclusionQuery(VAddr address) {
     std::scoped_lock lk{occlusion_mutex};
     if (!occlusion_pool) {
@@ -307,12 +314,10 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
 
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
-    {
-        const auto& hashes = pipeline->GetGraphicsKey().stage_hashes;
-        SetCheckpoint(instance, cmdbuf, is_indexed ? "drawIndexed" : "draw",
-                      hashes[u32(Shader::SwStage::Vertex)], hashes[u32(Shader::SwStage::Fragment)],
-                      regs.num_indices, regs.num_instances.NumInstances());
-    }
+    SetCheckpoint(instance, cmdbuf, is_indexed ? "drawIndexed" : "draw",
+                  StageProgramHash(pipeline, Shader::SwStage::Vertex),
+                  StageProgramHash(pipeline, Shader::SwStage::Fragment), regs.num_indices,
+                  regs.num_instances.NumInstances());
 
     if (is_indexed) {
         cmdbuf.drawIndexed(regs.num_indices, regs.num_instances.NumInstances(), 0,
@@ -383,11 +388,9 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
 
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
-    {
-        const auto& hashes = pipeline->GetGraphicsKey().stage_hashes;
-        SetCheckpoint(instance, cmdbuf, "drawIndirect", hashes[u32(Shader::SwStage::Vertex)],
-                      hashes[u32(Shader::SwStage::Fragment)], arg_address + offset, max_count);
-    }
+    SetCheckpoint(
+        instance, cmdbuf, "drawIndirect", StageProgramHash(pipeline, Shader::SwStage::Vertex),
+        StageProgramHash(pipeline, Shader::SwStage::Fragment), arg_address + offset, max_count);
 
     if (is_indexed) {
         ASSERT(sizeof(VkDrawIndexedIndirectCommand) == stride);
