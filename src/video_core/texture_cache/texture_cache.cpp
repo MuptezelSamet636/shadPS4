@@ -1023,7 +1023,10 @@ void TextureCache::AssociateStencil(ImageId depth_id, const ImageInfo& depth_inf
     if (depth_info.stencil_addr == 0 || depth_info.stencil_addr == depth_info.guest_address) {
         return;
     }
-    ImageId stencil_id{};
+    // Associate every image that views the stencil plane (the placeholder and any R8 texture
+    // created there before the depth buffer was bound), so all stencil reads are redirected to
+    // the depth-stencil image instead of a copy uploaded from (never written) guest memory.
+    SmallVector<ImageId, 4> stencil_ids;
     ForEachImageInRegion(
         depth_info.stencil_addr, depth_info.stencil_size, [&](ImageId image_id, Image& image) {
             if (image.info.guest_address != depth_info.stencil_addr) {
@@ -1031,20 +1034,24 @@ void TextureCache::AssociateStencil(ImageId depth_id, const ImageInfo& depth_inf
             }
             if (image.info.pixel_format == vk::Format::eUndefined ||
                 Vulkan::LiverpoolToVK::IsFormatStencilCompatible(image.info.pixel_format)) {
-                stencil_id = image_id;
+                stencil_ids.push_back(image_id);
             }
         });
-    if (!stencil_id) {
+    if (stencil_ids.empty()) {
         ImageInfo info{};
         info.guest_address = depth_info.stencil_addr;
         info.guest_size = depth_info.stencil_size;
         info.size = depth_info.size;
-        stencil_id = slot_images.Insert(instance, runtime, slot_image_views, info);
+        const auto stencil_id = slot_images.Insert(instance, runtime, slot_image_views, info);
         RegisterImage(stencil_id);
+        stencil_ids.push_back(stencil_id);
     }
-    Image& stencil_image = slot_images[stencil_id];
-    TouchImage(stencil_image);
-    stencil_image.AssociateDepth(depth_id, slot_images[depth_id].image_uid);
+    const u64 depth_uid = slot_images[depth_id].image_uid;
+    for (const auto stencil_id : stencil_ids) {
+        Image& stencil_image = slot_images[stencil_id];
+        TouchImage(stencil_image);
+        stencil_image.AssociateDepth(depth_id, depth_uid);
+    }
 }
 
 void TextureCache::RefreshImage(Image& image) {
