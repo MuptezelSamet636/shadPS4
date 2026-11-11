@@ -351,6 +351,13 @@ struct DynamicState {
 using SessionFunc = Common::UniqueFunction<void>;
 using SubmitFunc = Common::UniqueFunction<void, SubmitInfo&>;
 
+/// Records a GPU checkpoint (VK_NV_device_diagnostic_checkpoints) for the next command, so the
+/// last ones the GPU reached can be reported if the device is lost.
+void SetCheckpoint(const Instance& instance, vk::CommandBuffer cmdbuf, const char* kind, u64 a,
+                   u64 b = 0, u64 c = 0, u64 d = 0);
+/// Logs the last checkpoints the GPU reached. Call when the device is lost.
+void DumpCheckpoints(const Instance& instance);
+
 class Scheduler {
 public:
     explicit Scheduler(const Instance& instance);

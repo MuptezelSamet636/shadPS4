@@ -127,6 +127,11 @@ public:
         return maintenance_8;
     }
 
+    /// Returns true if VK_NV_device_diagnostic_checkpoints is supported
+    bool IsDiagnosticCheckpointsSupported() const {
+        return diagnostic_checkpoints;
+    }
+
     /// Returns true if VK_EXT_attachment_feedback_loop_layout is supported
     bool IsAttachmentFeedbackLoopLayoutSupported() const {
         return attachment_feedback_loop;
@@ -549,6 +554,7 @@ private:
     bool maintenance_5{};
     bool maintenance_6{};
     bool maintenance_8{};
+    bool diagnostic_checkpoints{};
     bool attachment_feedback_loop{};
     bool image_2d_view_of_3d{};
     bool image_view_min_lod{};

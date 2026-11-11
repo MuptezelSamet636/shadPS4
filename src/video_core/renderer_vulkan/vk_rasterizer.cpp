@@ -307,6 +307,12 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
 
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
+    {
+        const auto& hashes = pipeline->GetGraphicsKey().stage_hashes;
+        SetCheckpoint(instance, cmdbuf, is_indexed ? "drawIndexed" : "draw",
+                      hashes[u32(Shader::SwStage::Vertex)], hashes[u32(Shader::SwStage::Fragment)],
+                      regs.num_indices, regs.num_instances.NumInstances());
+    }
 
     if (is_indexed) {
         cmdbuf.drawIndexed(regs.num_indices, regs.num_instances.NumInstances(), 0,
@@ -377,6 +383,11 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
 
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
+    {
+        const auto& hashes = pipeline->GetGraphicsKey().stage_hashes;
+        SetCheckpoint(instance, cmdbuf, "drawIndirect", hashes[u32(Shader::SwStage::Vertex)],
+                      hashes[u32(Shader::SwStage::Fragment)], arg_address + offset, max_count);
+    }
 
     if (is_indexed) {
         ASSERT(sizeof(VkDrawIndexedIndirectCommand) == stride);
@@ -433,6 +444,8 @@ void Rasterizer::DispatchDirect() {
 
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline->Handle());
+    SetCheckpoint(instance, cmdbuf, "dispatch", cs.pgm_hash, cs_program.dim_x, cs_program.dim_y,
+                  cs_program.dim_z);
     cmdbuf.dispatch(cs_program.dim_x, cs_program.dim_y, cs_program.dim_z);
     DebugState.IncDispatch();
 
@@ -468,6 +481,8 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
 
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline->Handle());
+    SetCheckpoint(instance, cmdbuf, "dispatchIndirect",
+                  pipeline->GetStage(Shader::SwStage::Compute).pgm_hash, address + offset);
     cmdbuf.dispatchIndirect(buffer->Handle(), base);
     DebugState.IncDispatch();
 

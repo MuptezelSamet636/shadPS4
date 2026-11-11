@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <array>
+
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/thread.h"
@@ -9,6 +11,57 @@
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
 namespace Vulkan {
+
+namespace {
+struct CheckpointLabel {
+    u64 id;
+    const char* kind;
+    u64 a, b, c, d;
+};
+constexpr u64 NumCheckpointLabels = 8192;
+std::array<CheckpointLabel, NumCheckpointLabels> checkpoint_labels{};
+std::atomic<u64> checkpoint_counter{1};
+std::atomic<bool> checkpoints_dumped{};
+} // Anonymous namespace
+
+void SetCheckpoint(const Instance& instance, vk::CommandBuffer cmdbuf, const char* kind, u64 a,
+                   u64 b, u64 c, u64 d) {
+    if (!instance.IsDiagnosticCheckpointsSupported()) {
+        return;
+    }
+    const u64 id = checkpoint_counter.fetch_add(1, std::memory_order_relaxed);
+    checkpoint_labels[id % NumCheckpointLabels] = {id, kind, a, b, c, d};
+    cmdbuf.setCheckpointNV(reinterpret_cast<const void*>(static_cast<uintptr_t>(id)));
+}
+
+void DumpCheckpoints(const Instance& instance) {
+    if (!instance.IsDiagnosticCheckpointsSupported() || checkpoints_dumped.exchange(true)) {
+        return;
+    }
+    const auto data = instance.GetGraphicsQueue().getCheckpointDataNV();
+    LOG_CRITICAL(Render_Vulkan, "Device lost: {} GPU checkpoint(s), last issued #{}", data.size(),
+                 checkpoint_counter.load() - 1);
+    for (const auto& entry : data) {
+        const u64 id = static_cast<u64>(reinterpret_cast<uintptr_t>(entry.pCheckpointMarker));
+        const auto& label = checkpoint_labels[id % NumCheckpointLabels];
+        if (label.id != id || !label.kind) {
+            LOG_CRITICAL(Render_Vulkan, "  stage {}: checkpoint #{} (label overwritten)",
+                         vk::to_string(entry.stage), id);
+            continue;
+        }
+        LOG_CRITICAL(Render_Vulkan, "  stage {}: checkpoint #{} {} {:#x} {:#x} {:#x} {:#x}",
+                     vk::to_string(entry.stage), id, label.kind, label.a, label.b, label.c,
+                     label.d);
+        // Also show the commands recorded just before it.
+        for (u64 prev = id > 8 ? id - 8 : 1; prev < id; ++prev) {
+            const auto& p = checkpoint_labels[prev % NumCheckpointLabels];
+            if (p.id == prev && p.kind) {
+                LOG_CRITICAL(Render_Vulkan, "    before: #{} {} {:#x} {:#x} {:#x} {:#x}", prev,
+                             p.kind, p.a, p.b, p.c, p.d);
+            }
+        }
+    }
+}
 
 std::mutex Scheduler::submit_mutex;
 
@@ -242,6 +295,9 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
 
     ImGui::Core::TextureManager::Submit();
     auto submit_result = instance.GetGraphicsQueue().submit(submit_info, info.fence);
+    if (submit_result == vk::Result::eErrorDeviceLost) {
+        DumpCheckpoints(instance);
+    }
     ASSERT_MSG(submit_result != vk::Result::eErrorDeviceLost, "Device lost during submit");
 
     work_semaphore.Refresh();
