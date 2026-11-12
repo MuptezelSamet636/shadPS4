@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <map>
 #include <set>
 
 #include "common/debug.h"
@@ -1066,6 +1067,33 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
                              magic_enum::enum_name(desc.view_info.type),
                              vk::to_string(desc.view_info.format), desc.view_info.range.base.layer,
                              desc.view_info.range.extent.layers);
+                }
+            }
+            if (tsharp.tiling_index == 8 && image->info.guest_size <= 1_MB) {
+                // Diagnostic: compare a linear texture's guest memory with what the cache holds.
+                // Logs whenever the guest bytes change, with the image's dirty flags.
+                static std::map<VAddr, u64> linear_sums;
+                static u32 linear_logs = 0;
+                const VAddr addr = image->info.guest_address;
+                const auto* words = reinterpret_cast<const u64*>(addr);
+                const size_t count = image->info.guest_size / sizeof(u64);
+                u64 sum = 1469598103934665603ULL;
+                size_t nonzero = 0;
+                for (size_t w = 0; w < count; ++w) {
+                    sum = (sum ^ words[w]) * 1099511628211ULL;
+                    nonzero += words[w] != 0;
+                }
+                auto [it, inserted] = linear_sums.try_emplace(addr, sum);
+                if ((inserted || it->second != sum) && linear_logs < 2000) {
+                    ++linear_logs;
+                    it->second = sum;
+                    LOG_INFO(Render_Vulkan,
+                             "LinearProbe {:#x} {}x{} size {:#x}: guest sum {:#x} nonzero qwords "
+                             "{}/{} first {:#x} {:#x} | img #{} flags {:#x} | {} {:#x}",
+                             addr, image->info.size.width, image->info.size.height,
+                             image->info.guest_size, sum, nonzero, count, words[0],
+                             words[count / 2], image_id.index, u32(image->flags),
+                             magic_enum::enum_name(stage.sw_stage), stage.pgm_hash);
                 }
             }
             if (desc.IsSubrectTexture(image->info)) {
