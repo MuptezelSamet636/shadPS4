@@ -1277,14 +1277,19 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
             (regs.depth_render_control.depth_clear_enable && regs.depth_control.depth_enable &&
              regs.depth_control.depth_write_enable) ||
             texture_cache.IsMetaCleared(htile_address, slice);
-        const bool is_stencil_clear = regs.depth_render_control.stencil_clear_enable;
+        // A stencil clear only touches the bits in the write mask. Use the cheap attachment
+        // clear when the mask covers every bit; a partial clear is done by the draw itself
+        // (see UpdateDepthStencilState).
+        const bool is_stencil_clear = regs.depth_render_control.stencil_clear_enable &&
+                                      regs.stencil_ref_front.stencil_write_mask == 0xFF;
         texture_cache.TouchMeta(htile_address, slice, false);
         ASSERT(desc.view_info.range.extent.levels == 1 && !image.binding.needs_rebind);
 
         const bool has_stencil = image.info.props.has_stencil;
         // Stencil writes can be enabled while depth writes are off.
         const bool stencil_write =
-            has_stencil && regs.depth_control.stencil_enable && !desc.view_info.is_storage;
+            has_stencil && !desc.view_info.is_storage &&
+            (regs.depth_control.stencil_enable || regs.depth_render_control.stencil_clear_enable);
         const auto new_layout = desc.view_info.is_storage
                                     ? has_stencil ? vk::ImageLayout::eDepthStencilAttachmentOptimal
                                                   : vk::ImageLayout::eDepthAttachmentOptimal
@@ -1650,6 +1655,32 @@ void Rasterizer::UpdateDepthStencilState() const {
 
     const auto stencil_test_enabled =
         regs.depth_control.stencil_enable && regs.depth_buffer.StencilValid();
+    // Stencil clear restricted by the write mask (e.g. Destiny resets only its light-volume
+    // bit and keeps the material bits): replace the masked bits with the clear value.
+    const bool masked_stencil_clear = regs.depth_render_control.stencil_clear_enable &&
+                                      regs.depth_buffer.StencilValid() &&
+                                      regs.stencil_ref_front.stencil_write_mask != 0xFF;
+    if (masked_stencil_clear) {
+        static u32 logged = 0;
+        if (logged < 8) {
+            ++logged;
+            LOG_INFO(Render_Vulkan, "Masked stencil clear: value {:#x} write mask {:#x}",
+                     regs.stencil_clear, regs.stencil_ref_front.stencil_write_mask);
+        }
+        const StencilOps clear_ops{
+            .fail_op = vk::StencilOp::eReplace,
+            .pass_op = vk::StencilOp::eReplace,
+            .depth_fail_op = vk::StencilOp::eReplace,
+            .compare_op = vk::CompareOp::eAlways,
+        };
+        dynamic_state.SetStencilTestEnabled(true);
+        dynamic_state.SetStencilOps(clear_ops, clear_ops);
+        dynamic_state.SetStencilReferences(regs.stencil_clear, regs.stencil_clear);
+        dynamic_state.SetStencilWriteMasks(regs.stencil_ref_front.stencil_write_mask,
+                                           regs.stencil_ref_front.stencil_write_mask);
+        dynamic_state.SetStencilCompareMasks(0xFF, 0xFF);
+        return;
+    }
     dynamic_state.SetStencilTestEnabled(stencil_test_enabled);
     if (stencil_test_enabled) {
         const StencilOps front_ops{
